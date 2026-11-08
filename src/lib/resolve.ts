@@ -72,6 +72,13 @@ export function analyzeGaps(docs: EvidenceDoc[]) {
   else if (qi != null && qp != null)
     findings.push({ severity: "ok", title: "Quantities reconcile", detail: `Invoice and PO both list ${qi} units.` });
 
+  const shipTo = po.map((d) => d.original.match(/Ship to:\s*(.+)/i)?.[1]?.trim()).find(Boolean);
+  const deliverTo = man.map((d) => d.original.match(/Deliver to:\s*(.+)/i)?.[1]?.trim()).find(Boolean);
+  if (shipTo && deliverTo && shipTo !== deliverTo)
+    findings.push({ severity: "high", title: "Delivery address mismatch", detail: `PO ships to ${shipTo}, but the carrier delivered to ${deliverTo}.` });
+  if (man.length && man.some((d) => /no signature|left at/i.test(d.original)))
+    findings.push({ severity: "medium", title: "No delivery signature", detail: "Orders of $750 or more need signature confirmation to qualify for PayPal Seller Protection." });
+
   if (inv.length && po.length && man.length && !findings.some((f) => f.severity === "high"))
     findings.push({ severity: "ok", title: "Evidence chain complete", detail: "Supply → sale → fulfillment is documented end-to-end." });
 
