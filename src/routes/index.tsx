@@ -3,11 +3,16 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle, ShieldCheck, Upload, FileText, Hash, Sparkles, CheckCircle2, XCircle,
   Truck, Clock, Download, Store, Scale, Lock, Eye, EyeOff, Loader2, Receipt,
+  Terminal, X, Copy, Check, BadgeCheck,
 } from "lucide-react";
 import {
-  analyzeGaps, guessKind, now, redactPII, sha256Hex, SAMPLES,
+  analyzeGaps, guessKind, now, redactPII, sha256Hex,
   type AuditEvent, type EvidenceDoc, type DocKind,
 } from "@/lib/resolve";
+import {
+  SCENARIOS, sellerProtection, evOrderCompleted, evRiskHold, evProvideEvidence, evDisputeUpdated, evRelease, evResolved,
+  type ApiEvent, type ScenarioId,
+} from "@/lib/paypal";
 
 export const Route = createFileRoute("/")({
   head: () => ({
@@ -27,56 +32,179 @@ type Decision = { status: "approved"; at: string; txn: string; api: object } | n
 const KIND_LABEL: Record<DocKind, string> = { invoice: "Supplier invoice", po: "Wholesale PO", manifest: "Carrier manifest" };
 const HOLD_DEADLINE = Date.now() + 1000 * 60 * 60 * 71 + 1000 * 60 * 23;
 
+const initialEvents = (): ApiEvent[] => {
+  const t0 = new Date(Date.now() - 1000 * 60 * 47).toISOString();
+  const t1 = new Date(Date.now() - 1000 * 60 * 46).toISOString();
+  return [evOrderCompleted(t0), evRiskHold(t1)];
+};
+
 function App() {
   const [view, setView] = useState<View>("merchant");
+  const [scenario, setScenario] = useState<ScenarioId>("clean");
   const [docs, setDocs] = useState<EvidenceDoc[]>([]);
   const [audit, setAudit] = useState<AuditEvent[]>([
     { at: now(), actor: "PayPal Risk Engine", action: "Hold placed on $12,500.00 — velocity anomaly (7.4× 30-day avg)" },
   ]);
+  const [events, setEvents] = useState<ApiEvent[]>([]);
+  const [drawer, setDrawer] = useState(false);
+  const [unseen, setUnseen] = useState(0);
   const [submitted, setSubmitted] = useState(false);
   const [decision, setDecision] = useState<Decision>(null);
+  useEffect(() => { setEvents(initialEvents()); setUnseen(2); }, []);
   const log = (actor: string, action: string, hash?: string) =>
     setAudit((a) => [...a, { at: now(), actor, action, hash }]);
+  const emit = (...e: ApiEvent[]) => { setEvents((x) => [...x, ...e]); if (!drawer) setUnseen((n) => n + e.length); };
   const analysis = useMemo(() => analyzeGaps(docs), [docs]);
+  const sp = useMemo(() => sellerProtection(docs), [docs]);
+
+  const reset = (id: ScenarioId) => {
+    setScenario(id); setDocs([]); setSubmitted(false); setDecision(null); setView("merchant");
+    setAudit([{ at: now(), actor: "PayPal Risk Engine", action: "Hold placed on $12,500.00 — velocity anomaly (7.4× 30-day avg)" }]);
+    setEvents(initialEvents()); setUnseen(2);
+  };
 
   return (
     <div className="min-h-screen font-sans">
-      <header className="bg-primary text-primary-foreground">
-        <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-4">
-          <div className="flex items-center gap-2">
-            <div className="grid h-9 w-9 place-items-center rounded-lg bg-secondary"><ShieldCheck className="h-5 w-5" /></div>
+      <header className="bg-hero relative overflow-hidden text-primary-foreground">
+        <div className="bg-grid pointer-events-none absolute inset-0 opacity-30" />
+        <div className="relative mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-4">
+          <div className="flex items-center gap-3">
+            <div className="glow-ring grid h-10 w-10 place-items-center rounded-xl bg-secondary"><ShieldCheck className="h-5 w-5" /></div>
             <div>
-              <div className="text-lg font-extrabold tracking-tight">PayPal ResolveAI</div>
+              <div className="font-display text-lg font-bold tracking-tight">PayPal <span className="text-gold">ResolveAI</span></div>
               <div className="text-xs opacity-70">Maker–Checker hold resolution</div>
             </div>
           </div>
-          <nav className="flex rounded-lg bg-primary-foreground/10 p-1 text-sm font-semibold">
+          <nav className="flex rounded-xl bg-primary-foreground/10 p-1 text-sm font-semibold backdrop-blur">
             {([
               ["merchant", "Merchant", Store],
-              ["analyst", "Compliance Analyst", Scale],
+              ["analyst", "Analyst", Scale],
               ["receipt", "Receipt", Receipt],
             ] as const).map(([v, label, Icon]) => (
               <button key={v} onClick={() => setView(v)}
-                className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 transition ${view === v ? "bg-primary-foreground text-primary" : "hover:bg-primary-foreground/10"}`}>
+                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition-all duration-300 ${view === v ? "bg-primary-foreground text-primary shadow-lg" : "hover:bg-primary-foreground/10"}`}>
                 <Icon className="h-4 w-4" />{label}
               </button>
             ))}
           </nav>
+          <button onClick={() => { setDrawer(true); setUnseen(0); }}
+            className="relative flex items-center gap-2 rounded-xl border border-primary-foreground/20 bg-primary-foreground/5 px-3 py-2 text-sm font-semibold transition hover:bg-primary-foreground/15">
+            <Terminal className="h-4 w-4" />Developer console
+            {unseen > 0 && <span className="absolute -right-1.5 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-gold px-1 text-[10px] font-bold text-primary animate-pulse">{unseen}</span>}
+          </button>
+        </div>
+        <div className="relative mx-auto max-w-6xl px-6 pb-4">
+          <div className="flex flex-wrap items-center gap-2 text-xs">
+            <span className="mr-1 font-semibold uppercase tracking-wider opacity-60">Demo scenario</span>
+            {SCENARIOS.map((s) => (
+              <button key={s.id} onClick={() => reset(s.id)} title={s.tagline}
+                className={`rounded-full border px-3 py-1 font-semibold transition-all ${scenario === s.id ? "border-gold bg-gold text-primary" : "border-primary-foreground/25 hover:border-primary-foreground/60"}`}>
+                {s.label}
+              </button>
+            ))}
+          </div>
         </div>
       </header>
-      <main className="mx-auto max-w-6xl space-y-6 px-6 py-8">
+      <main key={view + scenario} className="animate-rise mx-auto max-w-6xl space-y-6 px-6 py-8">
         {view === "merchant" && (
-          <Merchant docs={docs} setDocs={setDocs} log={log} analysis={analysis}
+          <Merchant docs={docs} setDocs={setDocs} log={log} analysis={analysis} sp={sp}
+            samples={SCENARIOS.find((s) => s.id === scenario)!.samples}
             submitted={submitted} decision={decision}
-            onSubmit={() => { setSubmitted(true); log("Merchant", `Defense packet submitted (${docs.length} artifacts, readiness ${analysis.readiness}%)`); }} />
+            onSubmit={() => {
+              setSubmitted(true);
+              log("Merchant", `Defense packet submitted (${docs.length} artifacts, readiness ${analysis.readiness}%)`);
+              const t = now(); emit(evProvideEvidence(t, docs, sp.tracking), evDisputeUpdated(t));
+            }} />
         )}
         {view === "analyst" && (
-          <Analyst docs={docs} analysis={analysis} audit={audit} submitted={submitted} decision={decision}
-            onApprove={(d) => { setDecision(d); log("Analyst · K. Mensah", `Approved & released hold — ${d.txn}`); log("PayPal Payments API", "Reserve released: $12,500.00 restored to available balance"); }} />
+          <Analyst docs={docs} analysis={analysis} audit={audit} submitted={submitted} decision={decision} sp={sp}
+            onApprove={(d) => {
+              setDecision(d); log("Analyst · K. Mensah", `Approved & released hold — ${d.txn}`); log("PayPal Payments API", "Reserve released: $12,500.00 restored to available balance");
+              emit(evRelease(d.at, d.txn), evResolved(d.at, sp.eligible));
+            }} />
         )}
-        {view === "receipt" && <ReceiptView docs={docs} audit={audit} decision={decision} analysis={analysis} />}
+        {view === "receipt" && <ReceiptView docs={docs} audit={audit} decision={decision} analysis={analysis} sp={sp} />}
       </main>
+      <DevConsole open={drawer} onClose={() => setDrawer(false)} events={events} />
     </div>
+  );
+}
+
+function DevConsole({ open, onClose, events }: { open: boolean; onClose: () => void; events: ApiEvent[] }) {
+  const [sel, setSel] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const cur = events.find((e) => e.id === sel) ?? events[events.length - 1];
+  return (
+    <>
+      <div onClick={onClose} className={`fixed inset-0 z-40 bg-foreground/40 backdrop-blur-sm transition-opacity duration-300 ${open ? "opacity-100" : "pointer-events-none opacity-0"}`} />
+      <aside className={`fixed right-0 top-0 z-50 flex h-full w-full max-w-xl flex-col bg-console text-console-foreground shadow-2xl transition-transform duration-500 ease-out ${open ? "translate-x-0" : "translate-x-full"}`}>
+        <div className="flex items-center justify-between border-b border-console-foreground/10 px-5 py-4">
+          <div>
+            <div className="flex items-center gap-2 font-display font-bold"><span className="h-2 w-2 animate-pulse rounded-full bg-success" />PayPal REST API & Webhooks</div>
+            <div className="font-mono text-[11px] opacity-60">api-m.sandbox.paypal.com · v1/v2 · live event stream</div>
+          </div>
+          <button onClick={onClose} className="rounded-lg p-1.5 hover:bg-console-foreground/10"><X className="h-5 w-5" /></button>
+        </div>
+        <ol className="max-h-[42%] space-y-1 overflow-auto border-b border-console-foreground/10 p-3">
+          {events.map((e, i) => (
+            <li key={e.id} style={{ animationDelay: `${i * 40}ms` }} className="animate-rise">
+              <button onClick={() => setSel(e.id)} className={`flex w-full items-center gap-2 rounded-lg px-3 py-2 text-left font-mono text-xs transition ${cur?.id === e.id ? "bg-console-foreground/10" : "hover:bg-console-foreground/5"}`}>
+                {e.type === "webhook"
+                  ? <span className="rounded bg-gold/20 px-1.5 py-0.5 text-[10px] font-bold text-gold">WEBHOOK</span>
+                  : <span className="rounded bg-secondary/30 px-1.5 py-0.5 text-[10px] font-bold text-secondary">{e.method}</span>}
+                <span className="min-w-0 flex-1 truncate">{e.name}</span>
+                {e.status && <span className="text-success">{e.status}</span>}
+                <span className="opacity-50">{new Date(e.at).toLocaleTimeString()}</span>
+              </button>
+            </li>
+          ))}
+        </ol>
+        {cur && (
+          <div className="flex min-h-0 flex-1 flex-col">
+            <div className="flex items-center justify-between px-5 py-2 text-xs">
+              <span className="font-semibold opacity-70">{cur.type === "webhook" ? "Event payload" : "Request / response"}</span>
+              <button onClick={() => { navigator.clipboard.writeText(JSON.stringify(cur.payload, null, 2)); setCopied(true); setTimeout(() => setCopied(false), 1200); }}
+                className="flex items-center gap-1 rounded px-2 py-1 hover:bg-console-foreground/10">{copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}{copied ? "Copied" : "Copy JSON"}</button>
+            </div>
+            <pre key={cur.id} className="animate-rise min-h-0 flex-1 overflow-auto px-5 pb-5 font-mono text-[11px] leading-relaxed"><JsonView v={cur.payload} /></pre>
+          </div>
+        )}
+      </aside>
+    </>
+  );
+}
+
+function JsonView({ v }: { v: unknown }) {
+  const s = JSON.stringify(v, null, 2);
+  return <>{s.split(/("(?:\\.|[^"\\])*"(?:\s*:)?|\b-?\d+(?:\.\d+)?\b|\btrue\b|\bfalse\b|\bnull\b)/).map((t, i) =>
+    /^".*":$/.test(t) ? <span key={i} className="text-secondary">{t}</span>
+      : /^"/.test(t) ? <span key={i} className="text-gold">{t}</span>
+      : /^(-?\d|true|false|null)/.test(t) ? <span key={i} className="text-success">{t}</span> : t)}</>;
+}
+
+function SellerProtectionCard({ sp, compact }: { sp: ReturnType<typeof sellerProtection>; compact?: boolean }) {
+  return (
+    <section className={`relative overflow-hidden rounded-2xl border p-5 shadow-sm transition-colors duration-500 ${sp.eligible ? "border-success/40 bg-success/5" : "bg-card"}`}>
+      <div className="mb-3 flex items-center gap-3">
+        <div className={`grid h-11 w-11 place-items-center rounded-full ${sp.eligible ? "animate-stamp bg-success text-primary-foreground" : "bg-muted text-muted-foreground"}`}>
+          <BadgeCheck className="h-6 w-6" />
+        </div>
+        <div>
+          <div className="font-display font-bold">{sp.eligible ? "Eligible for PayPal Seller Protection" : "Not yet eligible for Seller Protection"}</div>
+          <div className="text-xs text-muted-foreground">Item Not Received · Unauthorized Transaction</div>
+        </div>
+      </div>
+      {!compact && (
+        <ul className="space-y-1.5">
+          {sp.rules.map((r) => (
+            <li key={r.id} className="flex gap-2 text-sm">
+              {r.pass ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />}
+              <div><span className="font-semibold">{r.label}</span><span className="text-muted-foreground"> — {r.detail}</span></div>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
   );
 }
 
@@ -127,9 +255,12 @@ function HoldBanner({ released }: { released: boolean }) {
 
 type Analysis = ReturnType<typeof analyzeGaps>;
 
-function Merchant({ docs, setDocs, log, analysis, submitted, onSubmit, decision }: {
+type SP = ReturnType<typeof sellerProtection>;
+
+function Merchant({ docs, setDocs, log, analysis, submitted, onSubmit, decision, sp, samples }: {
   docs: EvidenceDoc[]; setDocs: React.Dispatch<React.SetStateAction<EvidenceDoc[]>>;
   log: (a: string, b: string, h?: string) => void; analysis: Analysis; submitted: boolean; onSubmit: () => void; decision: Decision;
+  sp: SP; samples: { name: string; text: string }[];
 }) {
   const input = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string | null>(null);
@@ -154,7 +285,7 @@ function Merchant({ docs, setDocs, log, analysis, submitted, onSubmit, decision 
     }
   }
   async function loadSamples() {
-    for (const s of SAMPLES) if (!docs.some((d) => d.name === s.name)) await add(s.name, new TextEncoder().encode(s.text).buffer as ArrayBuffer, s.text);
+    for (const s of samples) if (!docs.some((d) => d.name === s.name)) await add(s.name, new TextEncoder().encode(s.text).buffer as ArrayBuffer, s.text);
   }
   const p = docs.find((d) => d.id === preview);
 
@@ -198,7 +329,8 @@ function Merchant({ docs, setDocs, log, analysis, submitted, onSubmit, decision 
             </Card>
           )}
         </div>
-        <div className="lg:col-span-2">
+        <div className="space-y-6 lg:col-span-2">
+          {docs.length > 0 && <SellerProtectionCard sp={sp} />}
           <Card title="AI Gap Analyzer · Pre-flight" icon={Sparkles}>
             <button disabled={!docs.length || running} onClick={() => { setRunning(true); setTimeout(() => { setRunning(false); setRan(true); log("ResolveAI", `Gap analysis run · readiness ${analysis.readiness}%`); }, 1200); }}
               className="flex w-full items-center justify-center gap-2 rounded-lg bg-secondary py-2.5 font-semibold text-secondary-foreground disabled:opacity-50">
@@ -231,8 +363,8 @@ function Merchant({ docs, setDocs, log, analysis, submitted, onSubmit, decision 
   );
 }
 
-function Analyst({ docs, analysis, audit, submitted, decision, onApprove }: {
-  docs: EvidenceDoc[]; analysis: Analysis; audit: AuditEvent[]; submitted: boolean; decision: Decision; onApprove: (d: NonNullable<Decision>) => void;
+function Analyst({ docs, analysis, audit, submitted, decision, onApprove, sp }: {
+  docs: EvidenceDoc[]; analysis: Analysis; audit: AuditEvent[]; submitted: boolean; decision: Decision; onApprove: (d: NonNullable<Decision>) => void; sp: SP;
 }) {
   const [busy, setBusy] = useState(false);
   const hasManifest = docs.some((d) => d.kind === "manifest");
@@ -262,6 +394,7 @@ function Analyst({ docs, analysis, audit, submitted, decision, onApprove }: {
         </Card>
       </div>
       <div className="space-y-6">
+        <SellerProtectionCard sp={sp} />
         <Card title="Fraud risk score" icon={Scale}>
           <div className="flex items-end gap-2"><span className={`text-5xl font-extrabold ${risk < 35 ? "text-success" : risk < 65 ? "text-warning" : "text-destructive"}`}>{risk}</span><span className="pb-2 text-muted-foreground">/ 100</span></div>
           <div className="text-sm text-muted-foreground">{risk < 35 ? "Low — evidence supports legitimate activity" : risk < 65 ? "Moderate — review gaps" : "High — insufficient evidence"}</div>
@@ -294,9 +427,9 @@ function Analyst({ docs, analysis, audit, submitted, decision, onApprove }: {
   );
 }
 
-function ReceiptView({ docs, audit, decision, analysis }: { docs: EvidenceDoc[]; audit: AuditEvent[]; decision: Decision; analysis: Analysis }) {
+function ReceiptView({ docs, audit, decision, analysis, sp }: { docs: EvidenceDoc[]; audit: AuditEvent[]; decision: Decision; analysis: Analysis; sp: SP }) {
   const [sealHash, setSealHash] = useState("");
-  const payload = useMemo(() => JSON.stringify({ case: "PP-4821", decision, evidence: docs.map((d) => ({ name: d.name, kind: d.kind, sha256: d.hash })), audit, riskScore: analysis.riskScore }, null, 2), [docs, audit, decision, analysis]);
+  const payload = useMemo(() => JSON.stringify({ case: "PP-4821", decision, seller_protection: { eligible: sp.eligible, rules: sp.rules.map((r) => ({ rule: r.label, pass: r.pass })) }, evidence: docs.map((d) => ({ name: d.name, kind: d.kind, sha256: d.hash })), audit, riskScore: analysis.riskScore }, null, 2), [docs, audit, decision, analysis, sp]);
   useEffect(() => { sha256Hex(new TextEncoder().encode(payload).buffer as ArrayBuffer).then(setSealHash); }, [payload]);
   if (!decision) return <div className="rounded-xl border bg-card p-10 text-center text-muted-foreground"><Receipt className="mx-auto mb-2 h-6 w-6" />The certified receipt is issued once an analyst approves the case.</div>;
   const download = () => {
@@ -321,6 +454,7 @@ function ReceiptView({ docs, audit, decision, analysis }: { docs: EvidenceDoc[];
           <h3 className="mb-2 text-sm font-bold">Decision log</h3>
           <ul className="space-y-1 text-xs">{audit.map((e, i) => <li key={i} className="flex gap-2"><span className="shrink-0 font-mono text-muted-foreground">{new Date(e.at).toLocaleTimeString()}</span><b className="shrink-0">{e.actor}</b><span>{e.action}</span></li>)}</ul>
         </div>
+        <SellerProtectionCard sp={sp} compact />
         <div className="rounded-lg bg-success/10 p-3 text-sm"><CheckCircle2 className="mr-1 inline h-4 w-4 text-success" />Funds restored to available balance via PayPal Payments API (simulated).</div>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t pt-4">
           <div className="min-w-0"><div className="text-xs text-muted-foreground">Receipt seal (SHA-256)</div><div className="break-all font-mono text-[11px]">{sealHash}</div></div>
