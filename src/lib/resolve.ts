@@ -12,7 +12,7 @@ export type EvidenceDoc = {
   piiCount: number;
 };
 
-export type AuditEvent = { at: string; actor: string; action: string; hash?: string };
+export type AuditEvent = { at: string; actor: string; action: string; hash?: string | undefined };
 
 export async function sha256Hex(buf: ArrayBuffer): Promise<string> {
   const d = await crypto.subtle.digest("SHA-256", buf);
