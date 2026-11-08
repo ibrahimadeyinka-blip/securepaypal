@@ -93,8 +93,8 @@ function Card({ title, icon: Icon, children, right }: { title: string; icon: typ
 }
 
 function Countdown() {
-  const [t, setT] = useState(HOLD_DEADLINE - Date.now());
-  useEffect(() => { const i = setInterval(() => setT(HOLD_DEADLINE - Date.now()), 1000); return () => clearInterval(i); }, []);
+  const [t, setT] = useState(0);
+  useEffect(() => { const tick = () => setT(HOLD_DEADLINE - Date.now()); tick(); const i = setInterval(tick, 1000); return () => clearInterval(i); }, []);
   const s = Math.max(0, Math.floor(t / 1000));
   const p = (n: number) => String(n).padStart(2, "0");
   return <span className="font-mono text-2xl font-semibold">{p(Math.floor(s / 3600))}:{p(Math.floor((s % 3600) / 60))}:{p(s % 60)}</span>;
