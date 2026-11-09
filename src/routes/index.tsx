@@ -1,3 +1,6 @@
+import { Button } from "@/components/ui/button";
+import { EvidenceComparison } from "@/components/evidence-comparison";
+import { evaluatePreflight } from "@/lib/preflight";
 import { createFileRoute } from "@tanstack/react-router";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
@@ -20,7 +23,9 @@ export const Route = createFileRoute("/")({
       { title: "PayPal ResolveAI — Dispute & Hold Resolution" },
       { name: "description", content: "Merchants submit sealed evidence, AI finds gaps, analysts release holds in one click." },
       { property: "og:title", content: "PayPal ResolveAI — Dispute & Hold Resolution" },
-      { property: "og:description", content: "AI-powered evidence analysis and certified resolution receipts for PayPal account holds." },
+      { property: "og:description", content: "Live evidence pre-flight checks, three-way document reconciliation and simulated hold resolution." },
+      { property: "og:type", content: "website" },
+      { name: "twitter:card", content: "summary_large_image" },
     ],
   }),
   component: App,
@@ -49,6 +54,8 @@ function App() {
   const [drawer, setDrawer] = useState(false);
   const [unseen, setUnseen] = useState(0);
   const [submitted, setSubmitted] = useState(false);
+  const [autoApprove, setAutoApprove] = useState(false);
+  const [autoPending, setAutoPending] = useState(false);
   const [decision, setDecision] = useState<Decision>(null);
   useEffect(() => { setEvents(initialEvents()); setUnseen(2); }, []);
   const log = (actor: string, action: string, hash?: string) =>
@@ -57,8 +64,26 @@ function App() {
   const analysis = useMemo(() => analyzeGaps(docs), [docs]);
   const sp = useMemo(() => sellerProtection(docs), [docs]);
 
+  const preflight = useMemo(() => evaluatePreflight(docs), [docs]);
+  const approve = (d: NonNullable<Decision>, actor: string) => {
+    if (!submitted || !preflight.ready || decision) return;
+    setDecision(d); setAutoPending(false);
+    log(actor, `Approved simulated release — ${d.txn}`);
+    log("PayPal Payments API (simulated)", "Reserve released: $12,500.00 restored to available balance");
+    emit(evRelease(d.at, d.txn), evResolved(d.at, sp.eligible));
+  };
+  useEffect(() => {
+    if (!autoPending || !submitted || !preflight.ready || decision) return;
+    const timer = setTimeout(() => {
+      const at = now();
+      const txn = "REL-" + crypto.randomUUID().slice(0, 8).toUpperCase();
+      approve({ status: "approved", at, txn, api: { simulated: true, approval_mode: "automatic", hold_status: "RELEASED", release_id: txn, amount: { currency_code: "USD", value: "12500.00" }, released_at: at } }, "ResolveAI · automated demo review");
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [autoPending, submitted, preflight.ready, decision]);
+
   const reset = (id: ScenarioId) => {
-    setScenario(id); setDocs([]); setSubmitted(false); setDecision(null); setView("merchant");
+    setAutoPending(false); setAutoApprove(false); setScenario(id); setDocs([]); setSubmitted(false); setDecision(null); setView("merchant");
     setAudit([{ at: now(), actor: "PayPal Risk Engine", action: "Hold placed on $12,500.00 — velocity anomaly (7.4× 30-day avg)" }]);
     setEvents(initialEvents()); setUnseen(2);
   };
@@ -108,20 +133,19 @@ function App() {
       <main key={view + scenario} className="animate-rise mx-auto max-w-6xl space-y-6 px-6 py-8">
         {view === "merchant" && (
           <Merchant docs={docs} setDocs={setDocs} log={log} analysis={analysis} sp={sp}
-            samples={SCENARIOS.find((s) => s.id === scenario)!.samples}
+            samples={(SCENARIOS.find((s) => s.id === scenario) ?? SCENARIOS[0]).samples}
+            preflight={preflight} autoApprove={autoApprove} setAutoApprove={setAutoApprove} autoPending={autoPending}
             submitted={submitted} decision={decision}
             onSubmit={() => {
-              setSubmitted(true);
+              if (!preflight.ready || submitted) return;
+              setSubmitted(true); setAutoPending(autoApprove);
               log("Merchant", `Defense packet submitted (${docs.length} artifacts, readiness ${analysis.readiness}%)`);
               const t = now(); emit(evProvideEvidence(t, docs, sp.tracking), evDisputeUpdated(t));
             }} />
         )}
         {view === "analyst" && (
           <Analyst docs={docs} analysis={analysis} audit={audit} submitted={submitted} decision={decision} sp={sp}
-            onApprove={(d) => {
-              setDecision(d); log("Analyst · K. Mensah", `Approved & released hold — ${d.txn}`); log("PayPal Payments API", "Reserve released: $12,500.00 restored to available balance");
-              emit(evRelease(d.at, d.txn), evResolved(d.at, sp.eligible));
-            }} />
+            onApprove={(d) => approve(d, "Analyst · K. Mensah")} preflight={preflight} autoPending={autoPending} />
         )}
         {view === "receipt" && <ReceiptView docs={docs} audit={audit} decision={decision} analysis={analysis} sp={sp} />}
       </main>
@@ -257,7 +281,8 @@ type Analysis = ReturnType<typeof analyzeGaps>;
 
 type SP = ReturnType<typeof sellerProtection>;
 
-function Merchant({ docs, setDocs, log, analysis, submitted, onSubmit, decision, sp, samples }: {
+function Merchant({ docs, setDocs, log, analysis, submitted, onSubmit, decision, sp, samples, preflight, autoApprove, setAutoApprove, autoPending }: {
+  preflight: ReturnType<typeof evaluatePreflight>; autoApprove: boolean; setAutoApprove: (value: boolean) => void; autoPending: boolean;
   docs: EvidenceDoc[]; setDocs: React.Dispatch<React.SetStateAction<EvidenceDoc[]>>;
   log: (a: string, b: string, h?: string) => void; analysis: Analysis; submitted: boolean; onSubmit: () => void; decision: Decision;
   sp: SP; samples: { name: string; text: string }[];
@@ -265,8 +290,7 @@ function Merchant({ docs, setDocs, log, analysis, submitted, onSubmit, decision,
   const input = useRef<HTMLInputElement>(null);
   const [preview, setPreview] = useState<string | null>(null);
   const [showRaw, setShowRaw] = useState(false);
-  const [ran, setRan] = useState(false);
-  const [running, setRunning] = useState(false);
+  const [uploading, setUploading] = useState(false);
 
   async function add(name: string, buf: ArrayBuffer, text: string) {
     const hash = await sha256Hex(buf);
@@ -274,18 +298,22 @@ function Merchant({ docs, setDocs, log, analysis, submitted, onSubmit, decision,
     const d: EvidenceDoc = { id: crypto.randomUUID(), name, kind: guessKind(name), size: buf.byteLength, hash, uploadedAt: now(), original: text, redacted, piiCount: count };
     setDocs((x) => [...x, d]);
     setPreview(d.id);
-    setRan(false);
+
     log("Merchant", `Uploaded ${name} · ${count} PII fields redacted`, hash);
   }
   async function onFiles(files: FileList | null) {
-    for (const f of Array.from(files ?? [])) {
+    if (submitted || uploading) return;
+    setUploading(true);
+    try { for (const f of Array.from(files ?? [])) {
       const buf = await f.arrayBuffer();
       const text = /text|json|csv/.test(f.type) || /\.(txt|csv|json)$/i.test(f.name) ? new TextDecoder().decode(buf) : `[binary ${f.type || "file"} — ${f.size} bytes, text extraction unavailable]`;
       await add(f.name, buf, text);
-    }
+    } } finally { setUploading(false); }
   }
   async function loadSamples() {
-    for (const s of samples) if (!docs.some((d) => d.name === s.name)) await add(s.name, new TextEncoder().encode(s.text).buffer as ArrayBuffer, s.text);
+    if (submitted || uploading) return;
+    setUploading(true);
+    try { for (const s of samples) if (!docs.some((d) => d.name === s.name)) await add(s.name, new TextEncoder().encode(s.text).buffer as ArrayBuffer, s.text); } finally { setUploading(false); }
   }
   const p = docs.find((d) => d.id === preview);
 
@@ -294,13 +322,13 @@ function Merchant({ docs, setDocs, log, analysis, submitted, onSubmit, decision,
       <HoldBanner released={!!decision} />
       <div className="grid gap-6 lg:grid-cols-5">
         <div className="space-y-6 lg:col-span-3">
-          <Card title="Secure evidence upload" icon={Lock} right={<button onClick={loadSamples} className="text-xs font-semibold text-secondary hover:underline">Load sample documents</button>}>
-            <button onClick={() => input.current?.click()} disabled={submitted}
-              className="flex w-full flex-col items-center gap-2 rounded-lg border-2 border-dashed border-secondary/40 bg-accent/40 p-8 text-center transition hover:bg-accent disabled:opacity-50">
+          <Card title="Secure evidence upload" icon={Lock} right={<Button variant="link" size="sm" disabled={submitted || uploading} onClick={loadSamples}>Load sample documents</Button>}>
+            <Button variant="outline" onClick={() => input.current?.click()} disabled={submitted || uploading}
+              className="flex w-full flex-col items-center gap-2 rounded-lg border-2 border-dashed border-secondary/40 bg-accent/40 h-auto whitespace-normal p-8 text-center transition hover:bg-accent disabled:opacity-50">
               <Upload className="h-6 w-6 text-secondary" />
               <span className="font-semibold">Drop supplier invoices, wholesale POs, carrier manifests</span>
               <span className="text-xs text-muted-foreground">Hashed with SHA-256 & PII-redacted in your browser before anything leaves your device</span>
-            </button>
+            </Button>
             <input ref={input} type="file" multiple hidden onChange={(e) => { onFiles(e.target.files); e.target.value = ""; }} />
             <ul className="mt-4 divide-y">
               {docs.map((d) => (
@@ -310,7 +338,8 @@ function Merchant({ docs, setDocs, log, analysis, submitted, onSubmit, decision,
                     <div className="truncate text-sm font-semibold">{d.name}</div>
                     <div className="truncate font-mono text-[11px] text-muted-foreground">sha256:{d.hash}</div>
                   </div>
-                  <select value={d.kind} onClick={(e) => e.stopPropagation()} onChange={(e) => setDocs((x) => x.map((y) => y.id === d.id ? { ...y, kind: e.target.value as DocKind } : y))}
+                  <Button variant="ghost" size="icon" disabled={submitted || uploading} aria-label={`Remove ${d.name}`} title="Remove document" onClick={(e) => { e.stopPropagation(); setDocs((x) => x.filter((y) => y.id !== d.id)); log("Merchant", `Removed ${d.name}`); }}><X className="h-4 w-4" /></Button>
+                  <select disabled={submitted || uploading} aria-label={`Document type for ${d.name}`} value={d.kind} onClick={(e) => e.stopPropagation()} onChange={(e) => setDocs((x) => x.map((y) => y.id === d.id ? { ...y, kind: e.target.value as DocKind } : y))}
                     className="rounded border bg-background px-1.5 py-1 text-xs">
                     {Object.entries(KIND_LABEL).map(([k, v]) => <option key={k} value={k}>{v}</option>)}
                   </select>
@@ -330,45 +359,39 @@ function Merchant({ docs, setDocs, log, analysis, submitted, onSubmit, decision,
           )}
         </div>
         <div className="space-y-6 lg:col-span-2">
-          {docs.length > 0 && <SellerProtectionCard sp={sp} />}
-          <Card title="AI Gap Analyzer · Pre-flight" icon={Sparkles}>
-            <button disabled={!docs.length || running} onClick={() => { setRunning(true); setTimeout(() => { setRunning(false); setRan(true); log("ResolveAI", `Gap analysis run · readiness ${analysis.readiness}%`); }, 1200); }}
-              className="flex w-full items-center justify-center gap-2 rounded-lg bg-secondary py-2.5 font-semibold text-secondary-foreground disabled:opacity-50">
-              {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}Run pre-flight check
-            </button>
-            {ran && (
-              <div className="mt-4 space-y-4">
-                <div>
-                  <div className="mb-1 flex justify-between text-sm"><span className="font-semibold">Case readiness</span><span className="font-mono">{analysis.readiness}%</span></div>
-                  <div className="h-2 rounded bg-muted"><div className={`h-2 rounded ${analysis.readiness >= 80 ? "bg-success" : "bg-warning"}`} style={{ width: `${analysis.readiness}%` }} /></div>
-                </div>
-                <ul className="space-y-2">
-                  {analysis.findings.map((f, i) => (
-                    <li key={i} className="flex gap-2 text-sm">
-                      {f.severity === "ok" ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" /> : f.severity === "high" ? <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" /> : <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-warning" />}
-                      <div><div className="font-semibold">{f.title}</div><div className="text-muted-foreground">{f.detail}</div></div>
-                    </li>
-                  ))}
-                </ul>
-                <div className="rounded-lg bg-accent p-3 text-sm"><div className="mb-1 text-xs font-bold uppercase text-accent-foreground">Generated defense summary</div>{analysis.summary}</div>
-                <button disabled={submitted} onClick={onSubmit} className="w-full rounded-lg bg-primary py-2.5 font-semibold text-primary-foreground disabled:opacity-60">
-                  {submitted ? "Submitted to PayPal Compliance ✓" : "Submit defense packet"}
-                </button>
-              </div>
-            )}
-          </Card>
+          <section className="border-t pt-5" aria-labelledby="preflight-title">
+            <div className="mb-4 flex items-center justify-between gap-2"><h2 id="preflight-title" className="flex items-center gap-2 font-bold"><ShieldCheck className="h-5 w-5 text-secondary" />Live Seller Protection Pre-flight</h2><span className="text-xs font-mono text-muted-foreground">{uploading ? "Reading…" : "LIVE"}</span></div>
+            <div aria-live="polite" className="mb-4">
+              <div className="flex justify-between text-sm font-semibold"><span>{preflight.ready ? "Ready to submit" : `${preflight.blockers.length} checks need attention`}</span><span>{preflight.readiness}%</span></div>
+              <progress aria-label="Evidence readiness" value={preflight.readiness} max={100} className="mt-2 h-2 w-full accent-success" />
+            </div>
+            <ul className="space-y-3">{preflight.checks.map((check) => <li key={check.id} className="flex gap-2 text-sm">
+              {check.pass ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-success" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />}
+              <div><div className="font-semibold">{check.label}</div>{!check.pass && <p className="mt-0.5 text-xs text-muted-foreground">{check.detail}</p>}</div>
+            </li>)}</ul>
+            <a href="https://www.paypal.com/us/legalhub/paypal/seller-protection" target="_blank" rel="noreferrer" className="mt-4 block text-xs text-secondary underline">PayPal Seller Protection requirements ↗</a>
+            <p className="mt-2 text-xs text-muted-foreground">Evidence readiness estimate, not a PayPal eligibility decision. Transaction eligibility and carrier records are not independently verified.</p>
+            <label className="mt-5 flex items-start gap-2 border-t pt-4 text-sm"><input type="checkbox" checked={autoApprove} disabled={submitted} onChange={(e) => setAutoApprove(e.target.checked)} className="mt-1 accent-primary" /><span className="font-semibold">Automatic approval (demo)<span className="mt-1 block text-xs font-normal text-muted-foreground">Clean evidence only · simulated release in 3 seconds</span></span></label>
+            <Button disabled={!preflight.ready || submitted || uploading} onClick={onSubmit} className="mt-4 h-auto min-h-10 w-full whitespace-normal py-3">{autoPending ? <><Loader2 className="animate-spin" />Simulated review in progress…</> : decision ? "Demo hold released ✓" : submitted ? "Submitted to Compliance ✓" : "Submit verified defense packet"}</Button>
+            {!preflight.ready && <p className="mt-2 text-xs text-destructive">Submission locked until every required check passes.</p>}
+          </section>
+
         </div>
       </div>
+      <EvidenceComparison result={preflight} />
+      {docs.length > 0 && <section className="border-t pt-5"><h2 className="mb-2 flex items-center gap-2 font-bold"><Sparkles className="h-4 w-4 text-secondary" />Evidence brief</h2><p className="text-sm text-muted-foreground">{analysis.summary}</p></section>}
     </>
   );
 }
 
-function Analyst({ docs, analysis, audit, submitted, decision, onApprove, sp }: {
+function Analyst({ docs, analysis, audit, submitted, decision, onApprove, sp, preflight, autoPending }: {
+  preflight: ReturnType<typeof evaluatePreflight>; autoPending: boolean;
   docs: EvidenceDoc[]; analysis: Analysis; audit: AuditEvent[]; submitted: boolean; decision: Decision; onApprove: (d: NonNullable<Decision>) => void; sp: SP;
 }) {
   const [busy, setBusy] = useState(false);
   const hasManifest = docs.some((d) => d.kind === "manifest");
-  const delivered = docs.some((d) => d.kind === "manifest" && /deliver|signed|POD/i.test(d.original));
+  const delivered = sp.rules.find((r) => r.id === "delivered")?.pass;
+  const signed = sp.rules.find((r) => r.id === "signature")?.pass;
   const track = docs.map((d) => d.original.match(/1Z[0-9A-Z]{16}/)?.[0]).find(Boolean);
   const risk = analysis.riskScore;
 
@@ -384,6 +407,7 @@ function Analyst({ docs, analysis, audit, submitted, decision, onApprove, sp }: 
             {docs.map((d) => <li key={d.id} className="flex items-center gap-2 text-xs"><ShieldCheck className="h-3.5 w-3.5 text-success" /><b>{KIND_LABEL[d.kind]}</b><span className="truncate font-mono text-muted-foreground">{d.hash.slice(0, 24)}…</span></li>)}
           </ul>
         </Card>
+        <EvidenceComparison result={preflight} />
         <Card title="Risk timeline" icon={Clock}>
           <ol className="relative space-y-3 border-l pl-5">
             {audit.map((e, i) => (
@@ -402,7 +426,7 @@ function Analyst({ docs, analysis, audit, submitted, decision, onApprove, sp }: 
         <Card title="Carrier verification" icon={Truck}>
           <div className="flex items-center gap-2 text-sm">
             {delivered ? <CheckCircle2 className="h-4 w-4 text-success" /> : <XCircle className="h-4 w-4 text-destructive" />}
-            {delivered ? "Delivered · POD signature verified" : hasManifest ? "In transit · no POD" : "No manifest provided"}
+            {delivered ? (signed ? "Delivered · signature in supplied evidence" : "Delivered · signature missing") : hasManifest ? "In transit · no POD" : "No manifest provided"}
           </div>
           {track && <div className="mt-1 font-mono text-xs text-muted-foreground">UPS {track}</div>}
         </Card>
@@ -410,16 +434,17 @@ function Analyst({ docs, analysis, audit, submitted, decision, onApprove, sp }: 
           {decision ? (
             <pre className="overflow-auto rounded-lg bg-muted p-3 font-mono text-[11px]">{JSON.stringify(decision.api, null, 2)}</pre>
           ) : (
-            <button disabled={busy} onClick={() => {
+            <Button disabled={busy || !preflight.ready || autoPending} onClick={() => {
+              if (!preflight.ready || autoPending) return;
               setBusy(true);
               setTimeout(() => {
                 const txn = "REL-" + Math.random().toString(36).slice(2, 10).toUpperCase();
                 const at = now();
-                onApprove({ status: "approved", at, txn, api: { status: 200, endpoint: "POST /v1/risk/holds/PP-4821/release", hold_status: "RELEASED", release_id: txn, amount: { currency_code: "USD", value: "12500.00" }, balance_bucket: "AVAILABLE", released_at: at } });
+                onApprove({ status: "approved", at, txn, api: { simulated: true, status: 200, endpoint: "POST /v1/risk/holds/PP-4821/release", hold_status: "RELEASED", release_id: txn, amount: { currency_code: "USD", value: "12500.00" }, balance_bucket: "AVAILABLE", released_at: at } });
               }, 1400);
             }} className="flex w-full items-center justify-center gap-2 rounded-lg bg-success py-3 font-bold text-primary-foreground disabled:opacity-60">
-              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}Approve & Release Hold
-            </button>
+              {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}Approve & Release Hold (demo)
+            </Button>
           )}
         </Card>
       </div>
@@ -431,7 +456,7 @@ function ReceiptView({ docs, audit, decision, analysis, sp }: { docs: EvidenceDo
   const [sealHash, setSealHash] = useState("");
   const payload = useMemo(() => JSON.stringify({ case: "PP-4821", decision, seller_protection: { eligible: sp.eligible, rules: sp.rules.map((r) => ({ rule: r.label, pass: r.pass })) }, evidence: docs.map((d) => ({ name: d.name, kind: d.kind, sha256: d.hash })), audit, riskScore: analysis.riskScore }, null, 2), [docs, audit, decision, analysis, sp]);
   useEffect(() => { sha256Hex(new TextEncoder().encode(payload).buffer as ArrayBuffer).then(setSealHash); }, [payload]);
-  if (!decision) return <div className="rounded-xl border bg-card p-10 text-center text-muted-foreground"><Receipt className="mx-auto mb-2 h-6 w-6" />The certified receipt is issued once an analyst approves the case.</div>;
+  if (!decision) return <div className="rounded-xl border bg-card p-10 text-center text-muted-foreground"><Receipt className="mx-auto mb-2 h-6 w-6" />The certified receipt is issued once the demo case is approved.</div>;
   const download = () => {
     const url = URL.createObjectURL(new Blob([JSON.stringify({ ...JSON.parse(payload), receipt_seal_sha256: sealHash }, null, 2)], { type: "application/json" }));
     const a = document.createElement("a"); a.href = url; a.download = "resolution-receipt-PP-4821.json"; a.click(); URL.revokeObjectURL(url);
