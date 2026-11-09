@@ -54,18 +54,19 @@ export function sellerProtection(docs: EvidenceDoc[], amount = AMOUNT) {
   const man = docs.filter((d) => d.kind === "manifest").map((d) => d.original).join("\n");
   const tracking = all.match(/\b(1Z[0-9A-Z]{16}|\d{12,22})\b/)?.[0];
   const tangible = docs.some((d) => d.kind === "invoice") && !/digital|license|download/i.test(all);
-  const delivered = /delivered/i.test(man);
+   const delivered = /\bdelivered\b/i.test(man) && !/not delivered|undelivered/i.test(man);
   const signed = /signed by|signature confirm/i.test(man) && !/no signature/i.test(man);
   const shipTo = all.match(/Ship to:\s*(.+)/i)?.[1]?.trim();
   const deliverTo = man.match(/Deliver to:\s*(.+)/i)?.[1]?.trim();
-  const addressOk = !shipTo || !deliverTo || shipTo === deliverTo;
+   const normalizeAddress = (value: string) => value.toLowerCase().replace(/[^a-z0-9]/g, "");
+   const addressOk = !!shipTo && !!deliverTo && normalizeAddress(shipTo) === normalizeAddress(deliverTo);
   const needsSig = amount >= 750;
   const rules: Rule[] = [
     { id: "tangible", label: "Physical, tangible item", pass: tangible, detail: tangible ? "Supplier invoice lists physical goods" : "No invoice proving a physical item" },
     { id: "tracking", label: "Online tracking number", pass: !!tracking, detail: tracking ? `Carrier tracking ${tracking}` : "No carrier tracking found" },
     { id: "delivered", label: "Delivered status", pass: delivered, detail: delivered ? "Carrier shows delivered" : "No proof of delivery" },
-    { id: "address", label: "Shipped to buyer's address", pass: addressOk, detail: addressOk ? "Delivery address matches the order" : `Order ships to ${shipTo}, carrier delivered to ${deliverTo}` },
-    { id: "signature", label: `Signature confirmation (orders ≥ $750)`, pass: !needsSig || signed, detail: signed ? "Recipient signature on file" : needsSig ? `$${amount.toLocaleString()} order needs a signature — none was captured` : "Not required" },
+     { id: "address", label: "Shipped to buyer's address", pass: addressOk, detail: addressOk ? "Delivery address matches the supplied PO; PayPal transaction address not independently verified" : !shipTo || !deliverTo ? "Supply both the PO shipping address and carrier delivery address" : `Order ships to ${shipTo}, carrier delivered to ${deliverTo}` },
+     { id: "signature", label: `Signature confirmation (orders ≥ $750)`, pass: !needsSig || signed, detail: signed ? "Recipient signature recorded in supplied evidence; not independently verified" : needsSig ? `$${amount.toLocaleString()} order: missing signature confirmation. Upload carrier evidence of a recipient signature before submitting.` : "Not required" },
   ];
   const eligible = rules.every((r) => r.pass);
   return { eligible, rules, tracking };
