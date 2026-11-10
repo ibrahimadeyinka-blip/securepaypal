@@ -135,7 +135,7 @@ function App() {
       <main key={view + scenario} className="animate-rise mx-auto max-w-6xl space-y-6 px-6 py-8">
         {view === "merchant" && (
           <Merchant docs={docs} setDocs={setDocs} log={log} analysis={analysis} sp={sp}
-            samples={(SCENARIOS.find((s) => s.id === scenario) ?? SCENARIOS[0]).samples}
+            samples={(SCENARIOS.find((s) => s.id === scenario) ?? SCENARIOS[0]!).samples}
             preflight={preflight} autoApprove={autoApprove} setAutoApprove={setAutoApprove} autoPending={autoPending}
             submitted={submitted} decision={decision}
             onSubmit={() => {
