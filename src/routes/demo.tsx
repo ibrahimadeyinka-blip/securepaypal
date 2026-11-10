@@ -1,7 +1,8 @@
 import { Button } from "@/components/ui/button";
 import { EvidenceComparison } from "@/components/evidence-comparison";
 import { evaluatePreflight } from "@/lib/preflight";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { Logo } from "@/components/logo";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   AlertTriangle, ShieldCheck, Upload, FileText, Hash, Sparkles, CheckCircle2, XCircle,
@@ -17,12 +18,13 @@ import {
   type ApiEvent, type ScenarioId,
 } from "@/lib/paypal";
 
-export const Route = createFileRoute("/")({
+export const Route = createFileRoute("/demo")({
+  validateSearch: (s: Record<string, unknown>): { scenario?: ScenarioId } => ({ scenario: ["clean","mismatch","nosig"].includes(s.scenario as string) ? (s.scenario as ScenarioId) : undefined }),
   head: () => ({
     meta: [
-      { title: "PayPal ResolveAI — Dispute & Hold Resolution" },
+      { title: "ResolveAI Live Demo — Release a PayPal Hold" },
       { name: "description", content: "Merchants submit sealed evidence, AI finds gaps, analysts release holds in one click." },
-      { property: "og:title", content: "PayPal ResolveAI — Dispute & Hold Resolution" },
+      { property: "og:title", content: "ResolveAI Live Demo — Release a PayPal Hold" },
       { property: "og:description", content: "Live evidence pre-flight checks, three-way document reconciliation and simulated hold resolution." },
       { property: "og:type", content: "website" },
       { name: "twitter:card", content: "summary_large_image" },
@@ -45,7 +47,7 @@ const initialEvents = (): ApiEvent[] => {
 
 function App() {
   const [view, setView] = useState<View>("merchant");
-  const [scenario, setScenario] = useState<ScenarioId>("clean");
+  const [scenario, setScenario] = useState<ScenarioId>(Route.useSearch().scenario ?? "clean");
   const [docs, setDocs] = useState<EvidenceDoc[]>([]);
   const [audit, setAudit] = useState<AuditEvent[]>([
     { at: now(), actor: "PayPal Risk Engine", action: "Hold placed on $12,500.00 — velocity anomaly (7.4× 30-day avg)" },
@@ -94,10 +96,10 @@ function App() {
         <div className="bg-grid pointer-events-none absolute inset-0 opacity-30" />
         <div className="relative mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-4">
           <div className="flex items-center gap-3">
-            <div className="glow-ring grid h-10 w-10 place-items-center rounded-xl bg-secondary"><ShieldCheck className="h-5 w-5" /></div>
+            <Link to="/" aria-label="Back to overview"><Logo className="h-10 w-10" /></Link>
             <div>
               <div className="font-display text-lg font-bold tracking-tight">PayPal <span className="text-gold">ResolveAI</span></div>
-              <div className="text-xs opacity-70">Maker–Checker hold resolution</div>
+              <Link to="/" className="text-xs opacity-70 hover:opacity-100">← Back to overview</Link>
             </div>
           </div>
           <nav className="flex rounded-xl bg-primary-foreground/10 p-1 text-sm font-semibold backdrop-blur">
