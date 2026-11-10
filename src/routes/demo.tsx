@@ -91,7 +91,7 @@ function App() {
   };
 
   return (
-    <div className="min-h-screen font-sans">
+    <div className="bg-canvas min-h-screen font-sans">
       <header className="bg-hero relative overflow-hidden text-primary-foreground">
         <div className="bg-grid pointer-events-none absolute inset-0 opacity-30" />
         <div className="relative mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-6 py-4">
@@ -102,27 +102,29 @@ function App() {
               <Link to="/" className="text-xs opacity-70 hover:opacity-100">← Back to overview</Link>
             </div>
           </div>
-          <nav className="flex rounded-xl bg-primary-foreground/10 p-1 text-sm font-semibold backdrop-blur">
-            {([
-              ["merchant", "Merchant", Store],
-              ["analyst", "Analyst", Scale],
-              ["receipt", "Receipt", Receipt],
-            ] as const).map(([v, label, Icon]) => (
-              <button key={v} onClick={() => setView(v)}
-                className={`flex items-center gap-1.5 rounded-lg px-3 py-1.5 transition-all duration-300 ${view === v ? "bg-primary-foreground text-primary shadow-lg" : "hover:bg-primary-foreground/10"}`}>
-                <Icon className="h-4 w-4" />{label}
-              </button>
-            ))}
-          </nav>
-          <button onClick={() => { setDrawer(true); setUnseen(0); }}
-            className="relative flex items-center gap-2 rounded-xl border border-primary-foreground/20 bg-primary-foreground/5 px-3 py-2 text-sm font-semibold transition hover:bg-primary-foreground/15">
-            <Terminal className="h-4 w-4" />Developer console
-            {unseen > 0 && <span className="absolute -right-1.5 -top-1.5 grid h-5 min-w-5 place-items-center rounded-full bg-gold px-1 text-[10px] font-bold text-primary animate-pulse">{unseen}</span>}
-          </button>
         </div>
-        <div className="relative mx-auto max-w-6xl px-6 pb-4">
-          <div className="flex flex-wrap items-center gap-2 text-xs">
-            <span className="mr-1 font-semibold uppercase tracking-wider opacity-60">Demo scenario</span>
+        <div className="relative mx-auto max-w-6xl px-6 pb-8 pt-2">
+          <p className="text-xs font-semibold uppercase tracking-widest text-gold">Live demo · Case #PP-4821</p>
+          <h1 className="mt-1 font-display text-2xl font-bold md:text-3xl">{view === "merchant" ? "Step 1 — Send your proof" : view === "analyst" ? "Step 2 — PayPal reviews it" : "Step 3 — Your money is back"}</h1>
+          <ol className="mt-6 grid grid-cols-3 gap-2 md:gap-4">
+            {([
+              ["merchant", "Send proof", "You, the seller", Store, true],
+              ["analyst", "Review", "PayPal reviewer", Scale, submitted],
+              ["receipt", "Receipt", "Funds released", Receipt, !!decision],
+            ] as const).map(([v, label, sub, Icon, done], i) => (
+              <li key={v}>
+                <button onClick={() => setView(v)} aria-current={view === v ? "step" : undefined}
+                  className={`group relative flex w-full items-center gap-3 overflow-hidden rounded-2xl border p-3 text-left transition-all duration-300 ${view === v ? "border-gold bg-primary-foreground text-primary shadow-xl" : "border-primary-foreground/20 bg-primary-foreground/5 hover:bg-primary-foreground/10"}`}>
+                  <span className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl font-display font-bold ${view === v ? "bg-gold text-primary" : done && i > 0 ? "bg-success text-primary-foreground" : "bg-primary-foreground/15"}`}>
+                    {done && i > 0 && view !== v ? <Check className="h-5 w-5" /> : <Icon className="h-5 w-5" />}
+                  </span>
+                  <span className="hidden min-w-0 sm:block"><span className="block text-sm font-bold">{label}</span><span className="block truncate text-xs opacity-70">{sub}</span></span>
+                </button>
+              </li>
+            ))}
+          </ol>
+          <div className="mt-5 flex flex-wrap items-center gap-2 text-xs">
+            <span className="mr-1 font-semibold opacity-70">Try a different story:</span>
             {SCENARIOS.map((s) => (
               <button key={s.id} onClick={() => reset(s.id)} title={s.tagline}
                 className={`rounded-full border px-3 py-1 font-semibold transition-all ${scenario === s.id ? "border-gold bg-gold text-primary" : "border-primary-foreground/25 hover:border-primary-foreground/60"}`}>
@@ -151,6 +153,10 @@ function App() {
         )}
         {view === "receipt" && <ReceiptView docs={docs} audit={audit} decision={decision} analysis={analysis} sp={sp} />}
       </main>
+      <footer className="mx-auto max-w-6xl px-6 pb-10 text-center text-xs text-muted-foreground">
+        Hackathon demo — no real PayPal money is moved.{" "}
+        <button onClick={() => { setDrawer(true); setUnseen(0); }} className="underline-offset-2 opacity-60 hover:underline hover:opacity-100">Technical log</button>
+      </footer>
       <DevConsole open={drawer} onClose={() => setDrawer(false)} events={events} />
     </div>
   );
@@ -236,7 +242,7 @@ function SellerProtectionCard({ sp, compact }: { sp: ReturnType<typeof sellerPro
 
 function Card({ title, icon: Icon, children, right }: { title: string; icon: typeof Hash; children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <section className="rounded-xl border bg-card p-5 shadow-sm">
+    <section className="card-accent relative overflow-hidden rounded-2xl border bg-card/90 p-5 shadow-sm backdrop-blur transition hover:-translate-y-0.5 hover:shadow-lg">
       <div className="mb-4 flex items-center justify-between gap-2">
         <h2 className="flex items-center gap-2 font-bold"><Icon className="h-4 w-4 text-secondary" />{title}</h2>
         {right}
