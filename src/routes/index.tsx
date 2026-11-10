@@ -46,7 +46,7 @@ function Landing() {
             <Logo className="h-10 w-10" />
             <span className="font-display text-lg font-bold">PayPal <span className="text-gold">ResolveAI</span></span>
           </div>
-          <Button asChild variant="secondary"><Link to="/demo" search={{ scenario: undefined }}>Try live demo</Link></Button>
+          <Button asChild variant="secondary"><Link to="/demo" search={{}}>Try live demo</Link></Button>
         </nav>
         <div className="relative mx-auto grid max-w-6xl gap-10 px-6 pb-20 pt-10 md:grid-cols-[1.2fr_1fr] md:items-center">
           <div className="animate-rise">
@@ -145,7 +145,7 @@ function Landing() {
         <section className="bg-hero text-primary-foreground">
           <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-6 px-6 py-12">
             <div className="flex items-center gap-3"><Lock className="h-6 w-6 text-gold" /><p className="max-w-lg text-sm opacity-90">Private details are hidden on your device. Every file gets a unique fingerprint so no one can change it later. This is a hackathon demo — no real PayPal money is moved.</p></div>
-            <Button asChild size="lg" variant="secondary"><Link to="/demo" search={{ scenario: undefined }}>Open live demo <ArrowRight /></Link></Button>
+            <Button asChild size="lg" variant="secondary"><Link to="/demo" search={{}}>Open live demo <ArrowRight /></Link></Button>
           </div>
         </section>
       </main>

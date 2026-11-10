@@ -19,7 +19,7 @@ import {
 } from "@/lib/paypal";
 
 export const Route = createFileRoute("/demo")({
-  validateSearch: (s: Record<string, unknown>): { scenario?: ScenarioId } => ({ scenario: ["clean","mismatch","nosig"].includes(s.scenario as string) ? (s.scenario as ScenarioId) : undefined }),
+  validateSearch: (s: Record<string, unknown>): { scenario?: ScenarioId | undefined } => ({ scenario: ["clean","mismatch","nosig"].includes(s.scenario as string) ? (s.scenario as ScenarioId) : undefined }),
   head: () => ({
     meta: [
       { title: "ResolveAI Live Demo — Release a PayPal Hold" },
